@@ -1,57 +1,56 @@
 #!/usr/bin/env bash
-
 set -euo pipefail
-
-if (( $# < 2 )); then
-  echo "Usage: $0 /path/to/input_dir /path/to/output_dir [--max_depth N]" >&2
-  exit 1
-fi
 
 INPUT_DIR="$1"
 OUTPUT_DIR="$2"
 shift 2
 
 MAX_DEPTH=""
-
 if [[ "${1-}" == "--max_depth" ]]; then
-  if [[ -z "${2-}" || ! "$2" =~ ^[0-9]+$ ]]; then
-    echo "Ошибка: неправильно указан --max_depth ." >&2
-    exit 1
-  fi
-  MAX_DEPTH="$2"
-fi
-
-if [[ ! -d "$INPUT_DIR" ]]; then
-  echo "Ошибка: входная директория '$INPUT_DIR' не существует." >&2
-  exit 1
+  shift
+  MAX_DEPTH="$1"
+  shift
 fi
 
 mkdir -p "$OUTPUT_DIR"
 
-if [[ -n "$MAX_DEPTH" ]]; then
-  FIND_CMD=(find "$INPUT_DIR" -maxdepth "$MAX_DEPTH" -type f -print0)
-else
-  FIND_CMD=(find "$INPUT_DIR" -type f -print0)
-fi
+join_by_slash() {
+  local IFS='/'
+  echo "$*"
+}
 
-"${FIND_CMD[@]}" | while IFS= read -r -d '' file; do
-  filename="$(basename "$file")"
-  name="${filename%.*}"
-  ext="${filename##*.}"
-  if [[ "$ext" != "$filename" ]]; then
-    ext=".$ext"
-  else
-    ext=""
+while IFS= read -r -d '' file; do
+  rel="${file#$INPUT_DIR/}"
+  IFS='/' read -ra parts <<< "$rel"
+  len=${#parts[@]}
+
+  if [[ -n "$MAX_DEPTH" && $len -gt $MAX_DEPTH ]]; then
+    offset=$(( len - MAX_DEPTH ))
+    parts=("${parts[@]:offset:MAX_DEPTH}")
   fi
 
-  dest="$OUTPUT_DIR/$filename"
+  new_rel=$(join_by_slash "${parts[@]}")
+  dest="$OUTPUT_DIR/$new_rel"
+  dest_dir=$(dirname "$dest")
+
+  mkdir -p "$dest_dir"
+
   if [[ -e "$dest" ]]; then
+    base="${parts[-1]}"
+    name="${base%.*}"
+    ext="${base##*.}"
+    if [[ "$ext" != "$base" ]]; then
+      ext=".$ext"
+    else
+      ext=""
+    fi
+
     i=1
-    while [[ -e "$OUTPUT_DIR/${name}${i}${ext}" ]]; do
+    while [[ -e "$dest_dir/$name$i$ext" ]]; do
       ((i++))
     done
-    dest="$OUTPUT_DIR/${name}${i}${ext}"
+    dest="$dest_dir/$name$i$ext"
   fi
 
   cp -- "$file" "$dest"
-done
+done < <(find "$INPUT_DIR" -type f -print0)
